@@ -133,7 +133,7 @@ async def upload_model(file: UploadFile = File(...)):
     try:
         import joblib
         import pickle
-        from sklearn.metrics import root_mean_squared_error
+        from sklearn.metrics import mean_squared_error
         
         params = load_params()
         
@@ -173,8 +173,8 @@ async def upload_model(file: UploadFile = File(...)):
         ensure_dir(params["paths"]["biased_predictions"])
         df.to_csv(params["paths"]["biased_predictions"], index=False)
         
-        # Calculate RMSE
-        rmse = root_mean_squared_error(df["actual"], df["pred_biased"])
+        # Calculate RMSE (using sqrt of MSE for older sklearn)
+        rmse = np.sqrt(mean_squared_error(df["actual"], df["pred_biased"]))
         
         # Cleanup
         if os.path.exists(model_path):
@@ -250,8 +250,8 @@ async def apply_mitigation(request: MitigationRequest):
         df.to_csv(params["paths"]["fair_predictions"], index=False)
         trainer.save_model(model)
         
-        from sklearn.metrics import root_mean_squared_error
-        rmse = root_mean_squared_error(y, df["pred_fair"])
+        from sklearn.metrics import mean_squared_error
+        rmse = np.sqrt(mean_squared_error(y, df["pred_fair"]))
         
         return {
             "message": "Mitigation applied successfully",
@@ -267,7 +267,7 @@ async def apply_mitigation(request: MitigationRequest):
 async def compare_models():
     """Compare biased and fair models"""
     try:
-        from sklearn.metrics import root_mean_squared_error, mean_absolute_error, r2_score
+        from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
         
         params = load_params()
         meta = load_metadata()
@@ -281,12 +281,12 @@ async def compare_models():
         # Overall metrics
         overall = {
             "biased": {
-                "rmse": float(root_mean_squared_error(merged["actual"], merged["pred_biased"])),
+                "rmse": float(np.sqrt(mean_squared_error(merged["actual"], merged["pred_biased"]))),
                 "mae": float(mean_absolute_error(merged["actual"], merged["pred_biased"])),
                 "r2": float(r2_score(merged["actual"], merged["pred_biased"]))
             },
             "fair": {
-                "rmse": float(root_mean_squared_error(merged["actual"], merged["pred_fair"])),
+                "rmse": float(np.sqrt(mean_squared_error(merged["actual"], merged["pred_fair"]))),
                 "mae": float(mean_absolute_error(merged["actual"], merged["pred_fair"])),
                 "r2": float(r2_score(merged["actual"], merged["pred_fair"]))
             }
@@ -299,8 +299,8 @@ async def compare_models():
             for group in merged[attr].unique():
                 group_data = merged[merged[attr] == group]
                 group_metrics[attr][str(group)] = {
-                    "biased_rmse": float(root_mean_squared_error(group_data["actual"], group_data["pred_biased"])),
-                    "fair_rmse": float(root_mean_squared_error(group_data["actual"], group_data["pred_fair"]))
+                    "biased_rmse": float(np.sqrt(mean_squared_error(group_data["actual"], group_data["pred_biased"]))),
+                    "fair_rmse": float(np.sqrt(mean_squared_error(group_data["actual"], group_data["pred_fair"])))
                 }
         
         return {
@@ -340,15 +340,15 @@ async def download_predictions(pred_type: str):
 async def get_model_card():
     """Generate and return model card"""
     try:
-        from sklearn.metrics import root_mean_squared_error
+        from sklearn.metrics import mean_squared_error
         
         params = load_params()
         meta = load_metadata()
         
         df = pd.read_csv(params["paths"]["fair_predictions"])
         
-        rmse_biased = root_mean_squared_error(df["actual"], df["pred_biased"])
-        rmse_fair = root_mean_squared_error(df["actual"], df["pred_fair"])
+        rmse_biased = np.sqrt(mean_squared_error(df["actual"], df["pred_biased"]))
+        rmse_fair = np.sqrt(mean_squared_error(df["actual"], df["pred_fair"]))
         
         model_card = {
             "generated_at": datetime.now().isoformat(),
