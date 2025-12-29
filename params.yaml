@@ -1,0 +1,28 @@
+paths:
+  raw_data: data/raw/input.csv
+  processed_data: data/processed/processed.csv
+  metadata: outputs/metadata.json
+  biased_predictions: outputs/biased_predictions.csv
+  fair_predictions: outputs/fair_predictions.csv
+  model: models/fair_model.joblib
+  model_card: outputs/model_card.md
+
+fairness:
+  techniques:
+    - none
+    - reweighing
+    - disparate_impact
+    - reject_option
+    - equalized_odds
+    - metafair
+    - adversarial
+
+training:
+  test_size: 0.2
+  random_state: 42
+  cv_folds: 3
+
+dagshub:
+  repo_owner: garvitwork
+  repo_name:  BiasWebAppEnhancedUI
+  mlflow_tracking: true

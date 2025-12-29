@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# DVC
+/data/raw/*.csv
+/data/processed/*.csv
+/models/*.joblib
+/outputs/*.csv
+/outputs/*.png
+/outputs/*.json
+
+# MLflow
+mlruns/
+
+# Temporary files
+temp_*
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+virtual_biasness/

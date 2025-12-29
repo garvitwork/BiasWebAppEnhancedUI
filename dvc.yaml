@@ -1,0 +1,32 @@
+stages:
+  data_upload:
+    cmd: python -c "from src.data_handler import DataHandler; DataHandler().process_data()"
+    deps:
+      - data/raw/input.csv
+    outs:
+      - data/processed/processed.csv
+      - outputs/metadata.json
+    
+  bias_detection:
+    cmd: python -c "from src.bias_detector import BiasDetector; BiasDetector().analyze()"
+    deps:
+      - outputs/biased_predictions.csv
+      - outputs/metadata.json
+    metrics:
+      - outputs/bias_metrics.json:
+          cache: false
+    plots:
+      - outputs/prediction_distribution.png
+      - outputs/group_treatment_rates.png
+  
+  fairness_mitigation:
+    cmd: python -c "from src.fairness_engine import FairnessEngine; FairnessEngine().apply_mitigation()"
+    deps:
+      - outputs/biased_predictions.csv
+      - outputs/metadata.json
+    outs:
+      - models/fair_model.joblib
+      - outputs/fair_predictions.csv
+    params:
+      - fairness
+      - training
