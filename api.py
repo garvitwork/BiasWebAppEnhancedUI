@@ -132,17 +132,32 @@ async def upload_model(file: UploadFile = File(...)):
     """Upload pre-trained model and generate biased predictions"""
     try:
         import joblib
+        import pickle
         from sklearn.metrics import root_mean_squared_error
         
         params = load_params()
         
+        # Get file extension
+        file_ext = file.filename.split('.')[-1].lower()
+        
         # Save model temporarily
-        model_path = "temp_model.joblib"
+        model_path = f"temp_model.{file_ext}"
         with open(model_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         
-        # Load model and data
-        model = joblib.load(model_path)
+        # Load model based on file type
+        try:
+            if file_ext in ['pkl', 'pickle']:
+                with open(model_path, 'rb') as f:
+                    model = pickle.load(f)
+            elif file_ext == 'joblib':
+                model = joblib.load(model_path)
+            else:
+                raise ValueError(f"Unsupported file format: .{file_ext}. Use .joblib, .pkl, or .pickle")
+        except Exception as e:
+            raise ValueError(f"Failed to load model: {str(e)}")
+        
+        # Load data
         df = pd.read_csv(params["paths"]["processed_data"])
         meta = load_metadata()
         
@@ -162,15 +177,20 @@ async def upload_model(file: UploadFile = File(...)):
         rmse = root_mean_squared_error(df["actual"], df["pred_biased"])
         
         # Cleanup
-        os.remove(model_path)
+        if os.path.exists(model_path):
+            os.remove(model_path)
         
         return {
             "message": "Model uploaded and predictions generated",
             "rmse": float(rmse),
-            "predictions_saved": params["paths"]["biased_predictions"]
+            "predictions_saved": params["paths"]["biased_predictions"],
+            "model_format": file_ext
         }
     
     except Exception as e:
+        # Cleanup on error
+        if 'model_path' in locals() and os.path.exists(model_path):
+            os.remove(model_path)
         raise HTTPException(status_code=400, detail=f"Model upload failed: {str(e)}")
 
 @app.get("/analyze-bias", response_model=BiasAnalysisResponse)
