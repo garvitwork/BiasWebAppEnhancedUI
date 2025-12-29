@@ -129,11 +129,16 @@ async def set_metadata(request: MetadataRequest):
 
 @app.post("/upload-model")
 async def upload_model(file: UploadFile = File(...)):
-    """Upload pre-trained model and generate biased predictions"""
+    """Upload pre-trained model and generate biased predictions - Compatible with multiple versions"""
+    import sys
+    import warnings
+    warnings.filterwarnings('ignore')
+    
+    model_path = None
+    
     try:
         import joblib
         import pickle
-        import sys
         from sklearn.metrics import mean_squared_error
         
         params = load_params()
@@ -141,66 +146,134 @@ async def upload_model(file: UploadFile = File(...)):
         # Get file extension
         file_ext = file.filename.split('.')[-1].lower()
         
+        # Validate file type
+        if file_ext not in ['pkl', 'pickle', 'joblib']:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported file format: .{file_ext}. Please upload .pkl, .pickle, or .joblib files."
+            )
+        
         # Save model temporarily
-        model_path = f"temp_model.{file_ext}"
+        model_path = f"temp_model_{os.getpid()}.{file_ext}"
         with open(model_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         
-        # Load model based on file type
+        # Try loading the model with multiple strategies
         model = None
-        load_errors = []
+        load_methods = []
         
+        # Strategy 1: Try joblib first (most compatible for sklearn models)
         try:
-            if file_ext in ['pkl', 'pickle']:
-                # Try multiple methods to load pickle files
+            model = joblib.load(model_path)
+            load_methods.append("joblib")
+        except Exception as e1:
+            # Strategy 2: Standard pickle
+            try:
+                with open(model_path, 'rb') as f:
+                    model = pickle.load(f)
+                load_methods.append("pickle-default")
+            except Exception as e2:
+                # Strategy 3: Pickle with latin1 encoding (Python 2 compatibility)
                 try:
-                    # Method 1: Standard pickle load
                     with open(model_path, 'rb') as f:
-                        model = pickle.load(f)
-                except Exception as e1:
-                    load_errors.append(f"Standard pickle: {str(e1)}")
+                        model = pickle.load(f, encoding='latin1')
+                    load_methods.append("pickle-latin1")
+                except Exception as e3:
+                    # Strategy 4: Pickle with bytes encoding
                     try:
-                        # Method 2: Joblib (often more compatible)
-                        model = joblib.load(model_path)
-                    except Exception as e2:
-                        load_errors.append(f"Joblib fallback: {str(e2)}")
+                        with open(model_path, 'rb') as f:
+                            model = pickle.load(f, encoding='bytes')
+                        load_methods.append("pickle-bytes")
+                    except Exception as e4:
+                        # Strategy 5: Try importing old module names
                         try:
-                            # Method 3: Pickle with Latin1 encoding (for Python 2 models)
+                            # Handle numpy version incompatibility
+                            import numpy.core._multiarray_umath as _multiarray_umath
+                            sys.modules['numpy.core._multiarray_umath'] = _multiarray_umath
+                            
                             with open(model_path, 'rb') as f:
-                                model = pickle.load(f, encoding='latin1')
-                        except Exception as e3:
-                            load_errors.append(f"Latin1 encoding: {str(e3)}")
-                            raise ValueError(f"Failed to load pickle model. Errors: {'; '.join(load_errors)}")
-            
-            elif file_ext == 'joblib':
-                model = joblib.load(model_path)
-            else:
-                raise ValueError(f"Unsupported file format: .{file_ext}. Use .joblib, .pkl, or .pickle")
-        
-        except Exception as e:
-            if os.path.exists(model_path):
-                os.remove(model_path)
-            raise ValueError(f"Failed to load model: {str(e)}")
+                                model = pickle.load(f)
+                            load_methods.append("pickle-numpy-compat")
+                        except Exception as e5:
+                            error_details = {
+                                "joblib": str(e1)[:100],
+                                "pickle_default": str(e2)[:100],
+                                "pickle_latin1": str(e3)[:100],
+                                "pickle_bytes": str(e4)[:100],
+                                "numpy_compat": str(e5)[:100]
+                            }
+                            raise ValueError(
+                                f"Could not load model with any method. "
+                                f"This usually means version incompatibility. "
+                                f"Try re-saving your model with: joblib.dump(model, 'model.joblib'). "
+                                f"Errors: {error_details}"
+                            )
         
         if model is None:
-            if os.path.exists(model_path):
-                os.remove(model_path)
-            raise ValueError("Model could not be loaded with any method")
+            raise ValueError("Model loaded but is None")
+        
+        # Verify model has predict method
+        if not hasattr(model, 'predict'):
+            raise ValueError(
+                f"Loaded object is not a valid model. Type: {type(model)}. "
+                f"Model must have a 'predict' method."
+            )
         
         # Load data
-        df = pd.read_csv(params["paths"]["processed_data"])
-        meta = load_metadata()
+        try:
+            df = pd.read_csv(params["paths"]["processed_data"])
+            meta = load_metadata()
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load processed data. "
+                f"Please upload dataset and configure metadata first. Error: {str(e)}"
+            )
         
         # Generate predictions
         data_handler = DataHandler()
         X = data_handler.encode_data(df, meta["features"])
         
+        # Validate data shape
+        if len(X) == 0:
+            raise ValueError("No data available for predictions")
+        
+        # Try to make predictions with error handling
         try:
             y_pred = model.predict(X)
-        except Exception as e:
-            if os.path.exists(model_path):
-                os.remove(model_path)
-            raise ValueError(f"Model prediction failed: {str(e)}. Check if model is compatible with current scikit-learn version.")
+        except Exception as pred_error:
+            error_msg = str(pred_error)
+            
+            # Provide helpful error messages based on common issues
+            if "feature" in error_msg.lower():
+                raise ValueError(
+                    f"Model expects different features than provided. "
+                    f"Model was trained on different data. "
+                    f"Error: {error_msg}"
+                )
+            elif "shape" in error_msg.lower():
+                raise ValueError(
+                    f"Data shape mismatch. "
+                    f"Your data has {X.shape[1]} features. "
+                    f"Error: {error_msg}"
+                )
+            elif "version" in error_msg.lower() or "module" in error_msg.lower():
+                raise ValueError(
+                    f"Library version incompatibility. "
+                    f"Try re-training model with current sklearn version. "
+                    f"Error: {error_msg}"
+                )
+            else:
+                raise ValueError(f"Prediction failed: {error_msg}")
+        
+        # Validate predictions
+        if y_pred is None or len(y_pred) == 0:
+            raise ValueError("Model returned empty predictions")
+        
+        if len(y_pred) != len(df):
+            raise ValueError(
+                f"Prediction length mismatch. "
+                f"Expected {len(df)}, got {len(y_pred)}"
+            )
         
         # Save predictions
         df["actual"] = df[meta["target"]]
@@ -209,25 +282,43 @@ async def upload_model(file: UploadFile = File(...)):
         ensure_dir(params["paths"]["biased_predictions"])
         df.to_csv(params["paths"]["biased_predictions"], index=False)
         
-        # Calculate RMSE (using sqrt of MSE for older sklearn)
-        rmse = np.sqrt(mean_squared_error(df["actual"], df["pred_biased"]))
+        # Calculate RMSE with error handling
+        try:
+            rmse = np.sqrt(mean_squared_error(df["actual"], df["pred_biased"]))
+            
+            # Sanity check
+            if np.isnan(rmse) or np.isinf(rmse):
+                raise ValueError("RMSE calculation resulted in invalid value")
+                
+        except Exception as e:
+            raise ValueError(f"Failed to calculate RMSE: {str(e)}")
         
         # Cleanup
-        if os.path.exists(model_path):
+        if model_path and os.path.exists(model_path):
             os.remove(model_path)
         
         return {
-            "message": "Model uploaded and predictions generated",
+            "message": "Model uploaded and predictions generated successfully",
             "rmse": float(rmse),
             "predictions_saved": params["paths"]["biased_predictions"],
-            "model_format": file_ext
+            "model_format": file_ext,
+            "load_method": load_methods[-1] if load_methods else "unknown",
+            "predictions_count": len(y_pred)
         }
     
-    except Exception as e:
-        # Cleanup on error
-        if 'model_path' in locals() and os.path.exists(model_path):
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        if model_path and os.path.exists(model_path):
             os.remove(model_path)
-        raise HTTPException(status_code=400, detail=f"Model upload failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        if model_path and os.path.exists(model_path):
+            os.remove(model_path)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Unexpected error during model upload: {str(e)}"
+        )
 
 @app.get("/analyze-bias", response_model=BiasAnalysisResponse)
 async def analyze_bias():
