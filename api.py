@@ -133,6 +133,7 @@ async def upload_model(file: UploadFile = File(...)):
     try:
         import joblib
         import pickle
+        import sys
         from sklearn.metrics import mean_squared_error
         
         params = load_params()
@@ -146,16 +147,45 @@ async def upload_model(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, f)
         
         # Load model based on file type
+        model = None
+        load_errors = []
+        
         try:
             if file_ext in ['pkl', 'pickle']:
-                with open(model_path, 'rb') as f:
-                    model = pickle.load(f)
+                # Try multiple methods to load pickle files
+                try:
+                    # Method 1: Standard pickle load
+                    with open(model_path, 'rb') as f:
+                        model = pickle.load(f)
+                except Exception as e1:
+                    load_errors.append(f"Standard pickle: {str(e1)}")
+                    try:
+                        # Method 2: Joblib (often more compatible)
+                        model = joblib.load(model_path)
+                    except Exception as e2:
+                        load_errors.append(f"Joblib fallback: {str(e2)}")
+                        try:
+                            # Method 3: Pickle with Latin1 encoding (for Python 2 models)
+                            with open(model_path, 'rb') as f:
+                                model = pickle.load(f, encoding='latin1')
+                        except Exception as e3:
+                            load_errors.append(f"Latin1 encoding: {str(e3)}")
+                            raise ValueError(f"Failed to load pickle model. Errors: {'; '.join(load_errors)}")
+            
             elif file_ext == 'joblib':
                 model = joblib.load(model_path)
             else:
                 raise ValueError(f"Unsupported file format: .{file_ext}. Use .joblib, .pkl, or .pickle")
+        
         except Exception as e:
+            if os.path.exists(model_path):
+                os.remove(model_path)
             raise ValueError(f"Failed to load model: {str(e)}")
+        
+        if model is None:
+            if os.path.exists(model_path):
+                os.remove(model_path)
+            raise ValueError("Model could not be loaded with any method")
         
         # Load data
         df = pd.read_csv(params["paths"]["processed_data"])
@@ -164,7 +194,13 @@ async def upload_model(file: UploadFile = File(...)):
         # Generate predictions
         data_handler = DataHandler()
         X = data_handler.encode_data(df, meta["features"])
-        y_pred = model.predict(X)
+        
+        try:
+            y_pred = model.predict(X)
+        except Exception as e:
+            if os.path.exists(model_path):
+                os.remove(model_path)
+            raise ValueError(f"Model prediction failed: {str(e)}. Check if model is compatible with current scikit-learn version.")
         
         # Save predictions
         df["actual"] = df[meta["target"]]
