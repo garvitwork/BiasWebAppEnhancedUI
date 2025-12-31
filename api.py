@@ -616,11 +616,15 @@ async def apply_mitigation(request: MitigationRequest):
                 sample_weights = np.ones(len(y))
         
         # Train fair model
+        # Train fair model
         trainer = ModelTrainer()
-        
+
         try:
             model, model_name = trainer.train(X_fair, y, sample_weights)
         except Exception as e:
+            print(f"Training error details: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise HTTPException(
                 status_code=500,
                 detail=f"Model training failed: {str(e)}"
