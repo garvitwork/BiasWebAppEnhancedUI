@@ -522,10 +522,11 @@ async def apply_mitigation(request: MitigationRequest):
         from sklearn.metrics import mean_squared_error
         
         params = load_params()
+        meta = load_metadata()  # Load metadata at the start
         data_handler = DataHandler()
         
         # Load data
-        X, y, df, meta = data_handler.get_train_data()
+        X, y, df, _ = data_handler.get_train_data()  # Use underscore since we already have meta
         
         # Get the protected attribute data
         if request.protected_attribute not in df.columns:
