@@ -25,4 +25,4 @@ training:
 dagshub:
   repo_owner: garvitwork
   repo_name:  BiasWebAppEnhancedUI
-  mlflow_tracking: true
+  mlflow_tracking: false
