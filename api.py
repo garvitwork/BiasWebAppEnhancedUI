@@ -620,11 +620,11 @@ async def apply_mitigation(request: MitigationRequest):
         trainer = ModelTrainer()
 
         try:
-            model, model_name = trainer.train(X_fair, y, sample_weights)
+            # Ensure y is numeric
+            y_train = pd.to_numeric(y, errors='coerce').fillna(0)
+            model, model_name = trainer.train(X_fair, y_train, sample_weights)
         except Exception as e:
-            print(f"Training error details: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"Training error: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Model training failed: {str(e)}"
