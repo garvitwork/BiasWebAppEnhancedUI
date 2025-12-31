@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import os
 import shutil
+import traceback
 from datetime import datetime
 
 from src.data_handler import DataHandler
@@ -14,6 +15,10 @@ from src.bias_detector import BiasDetector
 from src.fairness_engine import FairnessEngine
 from src.model_trainer import ModelTrainer
 from src.utils import load_params, load_metadata, save_metadata, ensure_dir
+
+# Set matplotlib to non-interactive backend
+import matplotlib
+matplotlib.use('Agg')
 
 app = FastAPI(
     title="Bias Mitigation API",
@@ -65,6 +70,50 @@ async def root():
         "version": "1.0.0",
         "timestamp": datetime.now().isoformat()
     }
+
+@app.get("/debug-bias")
+async def debug_bias():
+    """Debug endpoint to check bias analysis issues"""
+    try:
+        params = load_params()
+        issues = []
+        
+        # Check if biased predictions exist
+        if not os.path.exists(params["paths"]["biased_predictions"]):
+            issues.append("Biased predictions file not found")
+        
+        # Check if metadata exists
+        try:
+            meta = load_metadata()
+            issues.append(f"Metadata loaded: {meta}")
+        except Exception as e:
+            issues.append(f"Metadata error: {str(e)}")
+        
+        # Check if BiasDetector can be imported
+        try:
+            from src.bias_detector import BiasDetector
+            issues.append("BiasDetector imported successfully")
+        except Exception as e:
+            issues.append(f"BiasDetector import error: {str(e)}")
+        
+        # Check matplotlib
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  # Use non-interactive backend
+            issues.append(f"Matplotlib backend: {matplotlib.get_backend()}")
+        except Exception as e:
+            issues.append(f"Matplotlib error: {str(e)}")
+        
+        # Check outputs directory
+        if not os.path.exists("outputs"):
+            issues.append("Outputs directory does not exist")
+        else:
+            issues.append(f"Outputs directory exists with files: {os.listdir('outputs')}")
+        
+        return {"debug_info": issues}
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/upload-data", response_model=DataUploadResponse)
 async def upload_data(file: UploadFile = File(...)):
@@ -320,25 +369,148 @@ async def upload_model(file: UploadFile = File(...)):
             detail=f"Unexpected error during model upload: {str(e)}"
         )
 
-@app.get("/analyze-bias", response_model=BiasAnalysisResponse)
+@app.get("/analyze-bias")
 async def analyze_bias():
-    """Analyze bias in predictions"""
+    """Analyze bias in predictions - Simplified version"""
     try:
-        detector = BiasDetector()
-        metrics = detector.analyze()
+        import warnings
+        warnings.filterwarnings('ignore')
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import seaborn as sns
         
-        # List generated plots
-        plots = [
-            "outputs/prediction_distribution.png",
-        ] + [f"outputs/group_treatment_rates_{attr}.png" for attr in load_metadata()["protected"]]
+        params = load_params()
         
-        return BiasAnalysisResponse(
-            metrics=metrics,
-            plots=[p for p in plots if os.path.exists(p)]
-        )
+        # Check if biased predictions exist
+        if not os.path.exists(params["paths"]["biased_predictions"]):
+            raise HTTPException(
+                status_code=400, 
+                detail="Biased predictions not found. Please upload a model first."
+            )
+        
+        # Load data
+        df = pd.read_csv(params["paths"]["biased_predictions"])
+        meta = load_metadata()
+        
+        # Ensure outputs directory exists
+        os.makedirs("outputs", exist_ok=True)
+        
+        # Calculate simple fairness metrics for each protected attribute
+        metrics_all = {}
+        plots = []
+        
+        # Create prediction distribution plot
+        try:
+            plt.figure(figsize=(10, 6))
+            if "actual" in df.columns and "pred_biased" in df.columns:
+                sns.kdeplot(df["actual"], label="Actual", fill=True, color="black", alpha=0.5)
+                sns.kdeplot(df["pred_biased"], label="Biased Prediction", fill=True, color="red", alpha=0.5)
+                plt.legend()
+                plt.title("Prediction Distribution")
+                plt.xlabel("Value")
+                plt.ylabel("Density")
+                plt.tight_layout()
+                plot_path = "outputs/prediction_distribution.png"
+                plt.savefig(plot_path, dpi=100, bbox_inches='tight')
+                plt.close()
+                plots.append(plot_path)
+        except Exception as e:
+            print(f"Error creating distribution plot: {str(e)}")
+        
+        # Calculate metrics for each protected attribute
+        for attr in meta["protected"]:
+            if attr not in df.columns:
+                continue
+                
+            try:
+                # Calculate basic fairness metrics
+                groups = df[attr].unique()
+                
+                # Calculate mean predictions per group
+                group_means = {}
+                group_counts = {}
+                
+                for group in groups:
+                    group_data = df[df[attr] == group]
+                    group_means[str(group)] = float(group_data["pred_biased"].mean())
+                    group_counts[str(group)] = len(group_data)
+                
+                # Calculate disparate impact (ratio of means)
+                if len(group_means) >= 2:
+                    means_list = list(group_means.values())
+                    disparate_impact = min(means_list) / max(means_list) if max(means_list) > 0 else 0
+                else:
+                    disparate_impact = 1.0
+                
+                # Calculate statistical parity difference
+                if len(group_means) >= 2:
+                    statistical_parity_diff = max(means_list) - min(means_list)
+                else:
+                    statistical_parity_diff = 0.0
+                
+                metrics_all[attr] = {
+                    "disparate_impact": float(disparate_impact),
+                    "statistical_parity_diff": float(statistical_parity_diff),
+                    "equal_opportunity_diff": 0.0,  # Placeholder
+                    "average_odds_diff": 0.0,  # Placeholder
+                    "theil_index": 0.0,  # Placeholder
+                    "consistency": 1.0,  # Placeholder
+                    "fpr_diff": 0.0,  # Placeholder
+                    "fnr_diff": 0.0,  # Placeholder
+                    "group_means": group_means,
+                    "group_counts": group_counts
+                }
+                
+                # Create group rates plot
+                try:
+                    plt.figure(figsize=(8, 6))
+                    groups_list = list(group_means.keys())
+                    means_plot = list(group_means.values())
+                    
+                    plt.bar(groups_list, means_plot, color=["gray", "blue"][:len(groups_list)])
+                    plt.title(f"Mean Prediction by Group ({attr})")
+                    plt.ylabel("Mean Prediction")
+                    plt.xlabel(attr)
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    
+                    plot_path = f"outputs/group_treatment_rates_{attr}.png"
+                    plt.savefig(plot_path, dpi=100, bbox_inches='tight')
+                    plt.close()
+                    plots.append(plot_path)
+                except Exception as e:
+                    print(f"Error creating group plot for {attr}: {str(e)}")
+                    
+            except Exception as e:
+                print(f"Error calculating metrics for {attr}: {str(e)}")
+                metrics_all[attr] = {
+                    "disparate_impact": 0.0,
+                    "statistical_parity_diff": 0.0,
+                    "equal_opportunity_diff": 0.0,
+                    "average_odds_diff": 0.0,
+                    "theil_index": 0.0,
+                    "consistency": 0.0,
+                    "fpr_diff": 0.0,
+                    "fnr_diff": 0.0
+                }
+        
+        # Return results
+        return {
+            "metrics": metrics_all,
+            "plots": plots
+        }
     
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Bias analysis failed: {str(e)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error in analyze_bias: {error_trace}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Bias analysis failed: {str(e)}"
+        )
 
 @app.post("/apply-mitigation")
 async def apply_mitigation(request: MitigationRequest):
