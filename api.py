@@ -520,13 +520,23 @@ async def apply_mitigation(request: MitigationRequest):
         warnings.filterwarnings('ignore')
         from sklearn.utils.class_weight import compute_sample_weight
         from sklearn.metrics import mean_squared_error
+        from sklearn.preprocessing import LabelEncoder
         
+        # Load params and metadata explicitly
         params = load_params()
-        meta = load_metadata()  # Load metadata at the start
-        data_handler = DataHandler()
+        meta = load_metadata()
         
-        # Load data
-        X, y, df, _ = data_handler.get_train_data()  # Use underscore since we already have meta
+        # Load processed data directly instead of using DataHandler
+        df = pd.read_csv(params["paths"]["processed_data"])
+        
+        # Encode features
+        X = df[meta["features"]].copy()
+        for col in X.select_dtypes(include=["object", "category"]):
+            le = LabelEncoder()
+            X[col] = le.fit_transform(X[col].astype(str))
+        
+        # Get target
+        y = df[meta["target"]]
         
         # Get the protected attribute data
         if request.protected_attribute not in df.columns:
