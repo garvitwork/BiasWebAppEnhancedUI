@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
-from src.utils import load_params, save_metadata, ensure_dir
+from src.utils import load_params, load_metadata, save_metadata, ensure_dir
 
 class DataHandler:
     def __init__(self):
@@ -75,6 +75,8 @@ class DataHandler:
     
     def get_train_data(self):
         """Load processed data for training"""
+        from src.utils import load_metadata  # Import here to ensure it's available
+        
         df = pd.read_csv(self.params["paths"]["processed_data"])
         meta = load_metadata()
         
